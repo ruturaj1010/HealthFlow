@@ -7,6 +7,8 @@ const userRouter = require("./routes/userRoutes");
 const doctorRouter = require("./routes/doctorRoutes");
 const availabilityRouter = require("./routes/availabilityRoutes");
 const slotRouter = require("./routes/slotRoutes");
+const patientRouter = require("./routes/patientRoutes");
+const appointmentRouter = require("./routes/appointmentRoutes");
 
 const app = express();
 
@@ -24,6 +26,8 @@ app.use('/api/v1/users', userRouter);
 app.use('/api/v1/doctors', doctorRouter);
 app.use('/api/v1', availabilityRouter);
 app.use('/api/v1', slotRouter);
+app.use('/api/v1/patients', patientRouter);
+app.use('/api/v1/appointments', appointmentRouter);
 
 app.listen(process.env.PORT, ()=>{
     console.log("Backend is listening");
