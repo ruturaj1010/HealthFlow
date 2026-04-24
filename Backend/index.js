@@ -1,12 +1,10 @@
 require('dotenv').config()
 const express = require("express");
 const cors = require("cors")
-const { connectDB } = require("./DB/db");
-const userRouter = require("./routers/userRouter");
+const authRouter = require("./routes/authRoutes");
+const superAdminRouter = require("./routes/superAdminRoutes");
 
 const app = express();
-
-connectDB();
 
 app.use(cors())
 app.use(express.json());
@@ -16,7 +14,8 @@ app.get("/root", (req,res)=>{
     res.send("backend root");
 })
 
-app.get('/users', userRouter);
+app.use('/api/v1/auth', authRouter);
+app.use('/api/v1/super-admin', superAdminRouter);
 
 app.listen(process.env.PORT, ()=>{
     console.log("Backend is listening");
