@@ -1,4 +1,5 @@
 const { Pool } = require("pg");
+const logger = require("../utils/logger");
 
 let poolInstance;
 
@@ -9,7 +10,7 @@ const getPool = () => {
         });
         
         poolInstance.on("error", (error) => {
-            console.error("Unexpected PostgreSQL pool error:", error);
+            logger.error("Unexpected PostgreSQL pool error", { error: error.message });
         });
     }
 

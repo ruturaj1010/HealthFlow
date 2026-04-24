@@ -45,8 +45,8 @@ const createReceptionist = async (req, res) => {
         }
 
         const existingUser = await pool.query(
-            "SELECT id FROM users WHERE email = $1 LIMIT 1",
-            [email]
+            "SELECT id FROM users WHERE email = $1 AND tenant_id = $2 AND is_deleted = FALSE LIMIT 1",
+            [email, tenantId]
         );
         if (existingUser.rowCount > 0) {
             return res.status(409).json({
@@ -57,10 +57,10 @@ const createReceptionist = async (req, res) => {
 
         const passwordHash = await bcrypt.hash(password, 10);
         const result = await pool.query(
-            `INSERT INTO users (name, email, password, phone, role, tenant_id)
-             VALUES ($1, $2, $3, $4, $5, $6)
+            `INSERT INTO users (name, email, password, phone, role, tenant_id, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING id, name, email, phone, role, tenant_id, created_at`,
-            [name, email, passwordHash, phone || null, "RECEPTIONIST", tenantId]
+            [name, email, passwordHash, phone || null, "RECEPTIONIST", tenantId, req.user.userId]
         );
 
         return res.status(201).json({
@@ -90,7 +90,7 @@ const getUsers = async (req, res) => {
         const result = await pool.query(
             `SELECT id, name, email, phone, role, tenant_id, created_at
              FROM users
-             WHERE tenant_id = $1
+             WHERE tenant_id = $1 AND is_deleted = FALSE
              ORDER BY created_at DESC`,
             [tenantId]
         );
@@ -124,7 +124,7 @@ const getUserById = async (req, res) => {
         const result = await pool.query(
             `SELECT id, name, email, phone, role, tenant_id, created_at
              FROM users
-             WHERE id = $1 AND tenant_id = $2`,
+             WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
             [id, tenantId]
         );
 

@@ -54,8 +54,8 @@ const register = async (req, res) => {
         const tenantId = req.user.tenant_id;
 
         const existingUser = await pool.query(
-            "SELECT id FROM users WHERE email = $1",
-            [email]
+            "SELECT id FROM users WHERE email = $1 AND tenant_id = $2 AND is_deleted = FALSE",
+            [email, tenantId]
         );
 
         if (existingUser.rowCount > 0) {
@@ -68,10 +68,10 @@ const register = async (req, res) => {
         const passwordHash = await bcrypt.hash(password, 10);
 
         const newUserResult = await pool.query(
-            `INSERT INTO users (name, email, password, phone, role, tenant_id)
-             VALUES ($1, $2, $3, $4, $5, $6)
+            `INSERT INTO users (name, email, password, phone, role, tenant_id, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING id, name, email, phone, role, tenant_id, created_at`,
-            [name, email, passwordHash, phone, role, tenantId]
+            [name, email, passwordHash, phone, role, tenantId, req.user.userId]
         );
         const user = newUserResult.rows[0];
 
@@ -104,8 +104,8 @@ const patientRegister = async (req, res) => {
         }
 
         const existingUser = await pool.query(
-            "SELECT id FROM users WHERE email = $1",
-            [email]
+            "SELECT id FROM users WHERE email = $1 AND tenant_id = $2 AND is_deleted = FALSE",
+            [email, tenantId]
         );
 
         if (existingUser.rowCount > 0) {
@@ -119,18 +119,18 @@ const patientRegister = async (req, res) => {
 
         const data = await withTransaction(async (client) => {
             const userInsert = await client.query(
-                `INSERT INTO users (name, email, password, phone, role, tenant_id)
-                 VALUES ($1, $2, $3, $4, $5, $6)
+                `INSERT INTO users (name, email, password, phone, role, tenant_id, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                  RETURNING id, name, email, phone, role, tenant_id, created_at`,
-                [name, email, passwordHash, phone, "PATIENT", tenantId]
+                [name, email, passwordHash, phone, "PATIENT", tenantId, null]
             );
 
             const user = userInsert.rows[0];
             const patientInsert = await client.query(
-                `INSERT INTO patients (user_id, name, phone, tenant_id)
-                 VALUES ($1, $2, $3, $4)
+                `INSERT INTO patients (user_id, name, phone, tenant_id, created_by)
+                 VALUES ($1, $2, $3, $4, $5)
                  RETURNING id, user_id, name, phone, tenant_id`,
-                [user.id, name, phone, tenantId]
+                [user.id, name, phone, tenantId, user.id]
             );
 
             return {
@@ -182,8 +182,8 @@ const login = async (req, res) => {
         const userResult = await pool.query(
             `SELECT id, name, email, phone, password, role, tenant_id, created_at
              FROM users
-             WHERE email = $1`,
-            [email]
+             WHERE email = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
+            [email, tenantId]
         );
 
         if (userResult.rowCount === 0) {
@@ -249,8 +249,8 @@ const me = async (req, res) => {
         const userResult = await pool.query(
             `SELECT id, name, email, phone, role, tenant_id, created_at
              FROM users
-             WHERE id = $1`,
-            [req.user.userId]
+             WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
+            [req.user.userId, req.user.tenant_id]
         );
 
         if (userResult.rowCount === 0) {

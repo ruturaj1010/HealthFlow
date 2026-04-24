@@ -19,6 +19,13 @@ const createAvailability = async (req, res) => {
             });
         }
 
+        if (Object.prototype.hasOwnProperty.call(req.body, "tenant_id")) {
+            return res.status(400).json({
+                success: false,
+                message: "tenant_id is not allowed in request body",
+            });
+        }
+
         if (day_of_week < 0 || day_of_week > 6) {
             return res.status(400).json({ success: false, message: "day_of_week must be between 0 and 6" });
         }
@@ -28,7 +35,7 @@ const createAvailability = async (req, res) => {
         }
 
         const doctorCheck = await pool.query(
-            "SELECT id FROM doctors WHERE id = $1 AND tenant_id = $2 LIMIT 1",
+            "SELECT id FROM doctors WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE LIMIT 1",
             [doctorId, tenantId]
         );
         if (doctorCheck.rowCount === 0) {
@@ -38,7 +45,7 @@ const createAvailability = async (req, res) => {
         const duplicateCheck = await pool.query(
             `SELECT id
              FROM doctor_availability
-             WHERE doctor_id = $1 AND day_of_week = $2 AND tenant_id = $3
+             WHERE doctor_id = $1 AND day_of_week = $2 AND tenant_id = $3 AND is_deleted = FALSE
              LIMIT 1`,
             [doctorId, day_of_week, tenantId]
         );
@@ -50,10 +57,10 @@ const createAvailability = async (req, res) => {
         }
 
         const result = await pool.query(
-            `INSERT INTO doctor_availability (doctor_id, day_of_week, start_time, end_time, tenant_id)
-             VALUES ($1, $2, $3, $4, $5)
+            `INSERT INTO doctor_availability (doctor_id, day_of_week, start_time, end_time, tenant_id, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6)
              RETURNING id, doctor_id, day_of_week, start_time, end_time, tenant_id`,
-            [doctorId, day_of_week, start_time, end_time, tenantId]
+            [doctorId, day_of_week, start_time, end_time, tenantId, req.user.userId]
         );
 
         return res.status(201).json({
@@ -79,8 +86,15 @@ const getDoctorAvailability = async (req, res) => {
             return res.status(401).json({ success: false, message: "Unauthorized" });
         }
 
+        if (Object.prototype.hasOwnProperty.call(req.body, "tenant_id")) {
+            return res.status(400).json({
+                success: false,
+                message: "tenant_id is not allowed in request body",
+            });
+        }
+
         const doctorCheck = await pool.query(
-            "SELECT id FROM doctors WHERE id = $1 AND tenant_id = $2 LIMIT 1",
+            "SELECT id FROM doctors WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE LIMIT 1",
             [doctorId, tenantId]
         );
         if (doctorCheck.rowCount === 0) {
@@ -90,7 +104,7 @@ const getDoctorAvailability = async (req, res) => {
         const result = await pool.query(
             `SELECT id, doctor_id, day_of_week, start_time, end_time, tenant_id
              FROM doctor_availability
-             WHERE doctor_id = $1 AND tenant_id = $2
+             WHERE doctor_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
              ORDER BY day_of_week ASC`,
             [doctorId, tenantId]
         );
@@ -122,7 +136,7 @@ const updateAvailability = async (req, res) => {
         const existing = await pool.query(
             `SELECT id, doctor_id, day_of_week, start_time, end_time
              FROM doctor_availability
-             WHERE id = $1 AND tenant_id = $2`,
+             WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
             [availabilityId, tenantId]
         );
         if (existing.rowCount === 0) {
@@ -145,7 +159,7 @@ const updateAvailability = async (req, res) => {
         const duplicateCheck = await pool.query(
             `SELECT id
              FROM doctor_availability
-             WHERE doctor_id = $1 AND day_of_week = $2 AND tenant_id = $3 AND id != $4
+             WHERE doctor_id = $1 AND day_of_week = $2 AND tenant_id = $3 AND id != $4 AND is_deleted = FALSE
              LIMIT 1`,
             [current.doctor_id, nextDay, tenantId, availabilityId]
         );
@@ -158,8 +172,9 @@ const updateAvailability = async (req, res) => {
 
         const result = await pool.query(
             `UPDATE doctor_availability
-             SET day_of_week = $1, start_time = $2, end_time = $3
+             SET day_of_week = $1, start_time = $2, end_time = $3, updated_at = CURRENT_TIMESTAMP
              WHERE id = $4 AND tenant_id = $5
+               AND is_deleted = FALSE
              RETURNING id, doctor_id, day_of_week, start_time, end_time, tenant_id`,
             [nextDay, nextStart, nextEnd, availabilityId, tenantId]
         );
@@ -188,8 +203,9 @@ const deleteAvailability = async (req, res) => {
         }
 
         const result = await pool.query(
-            `DELETE FROM doctor_availability
-             WHERE id = $1 AND tenant_id = $2
+            `UPDATE doctor_availability
+             SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
              RETURNING id`,
             [availabilityId, tenantId]
         );

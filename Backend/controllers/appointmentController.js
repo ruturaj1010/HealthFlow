@@ -1,8 +1,10 @@
-const { pool } = require("../DB/db");
+const { withTransaction } = require("../DB/db");
 
 const createAppointment = async (req, res) => {
     try {
         const tenantId = req.user?.tenant_id;
+        const role = req.user?.role;
+        const userId = req.user?.userId;
         const { patient_id, doctor_id, slot_id } = req.body;
 
         if (!tenantId) {
@@ -23,48 +25,56 @@ const createAppointment = async (req, res) => {
             });
         }
 
-        const patientCheck = await pool.query(
-            "SELECT id FROM patients WHERE id = $1 AND tenant_id = $2 LIMIT 1",
-            [patient_id, tenantId]
-        );
-        if (patientCheck.rowCount === 0) {
-            return res.status(404).json({ success: false, message: "Patient not found" });
-        }
+        const insertResult = await withTransaction(async (client) => {
+            let resolvedDoctorId = doctor_id;
+            if (role === "DOCTOR") {
+                const ownDoctor = await client.query(
+                    "SELECT id FROM doctors WHERE user_id = $1 AND tenant_id = $2 AND is_deleted = FALSE LIMIT 1",
+                    [userId, tenantId]
+                );
+                if (ownDoctor.rowCount === 0) {
+                    throw Object.assign(new Error("Doctor profile not found"), { status: 404 });
+                }
+                resolvedDoctorId = ownDoctor.rows[0].id;
+            }
 
-        const slotCheck = await pool.query(
-            `SELECT id, doctor_id, slot_date, max_patients
-             FROM time_slots
-             WHERE id = $1 AND doctor_id = $2 AND tenant_id = $3
-             LIMIT 1`,
-            [slot_id, doctor_id, tenantId]
-        );
-        if (slotCheck.rowCount === 0) {
-            return res.status(404).json({
-                success: false,
-                message: "Slot not found for this doctor and tenant",
-            });
-        }
+            const patientCheck = await client.query(
+                "SELECT id FROM patients WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE LIMIT 1",
+                [patient_id, tenantId]
+            );
+            if (patientCheck.rowCount === 0) {
+                throw Object.assign(new Error("Patient not found"), { status: 404 });
+            }
 
-        const slot = slotCheck.rows[0];
-        const countResult = await pool.query(
-            "SELECT COUNT(*)::int AS total FROM appointments WHERE slot_id = $1 AND tenant_id = $2",
-            [slot_id, tenantId]
-        );
-        const currentCount = countResult.rows[0].total;
+            const slotCheck = await client.query(
+                `SELECT id, doctor_id, slot_date, max_patients
+                 FROM time_slots
+                 WHERE id = $1 AND doctor_id = $2 AND tenant_id = $3 AND is_deleted = FALSE
+                 FOR UPDATE`,
+                [slot_id, resolvedDoctorId, tenantId]
+            );
+            if (slotCheck.rowCount === 0) {
+                throw Object.assign(new Error("Slot not found for this doctor and tenant"), { status: 404 });
+            }
 
-        if (currentCount >= slot.max_patients) {
-            return res.status(400).json({
-                success: false,
-                message: "Reached max capacity. Please book for tomorrow's slot",
-            });
-        }
+            const slot = slotCheck.rows[0];
+            const countResult = await client.query(
+                "SELECT COUNT(*)::int AS total FROM appointments WHERE slot_id = $1 AND tenant_id = $2 AND is_deleted = FALSE",
+                [slot_id, tenantId]
+            );
+            const currentCount = countResult.rows[0].total;
 
-        const insertResult = await pool.query(
-            `INSERT INTO appointments (patient_id, doctor_id, slot_id, appointment_date, tenant_id)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING id, patient_id, doctor_id, slot_id, appointment_date, tenant_id, created_at`,
-            [patient_id, doctor_id, slot_id, slot.slot_date, tenantId]
-        );
+            if (currentCount >= slot.max_patients) {
+                throw Object.assign(new Error("Reached max capacity. Please book for tomorrow's slot"), { status: 400 });
+            }
+
+            return client.query(
+                `INSERT INTO appointments (patient_id, doctor_id, slot_id, appointment_date, tenant_id, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 RETURNING id, patient_id, doctor_id, slot_id, appointment_date, tenant_id, created_at`,
+                [patient_id, resolvedDoctorId, slot_id, slot.slot_date, tenantId, userId]
+            );
+        });
 
         return res.status(201).json({
             success: true,
@@ -72,9 +82,9 @@ const createAppointment = async (req, res) => {
             data: insertResult.rows[0],
         });
     } catch (error) {
-        return res.status(500).json({
+        return res.status(error.status || 500).json({
             success: false,
-            message: "Failed to book appointment",
+            message: error.status ? error.message : "Failed to book appointment",
             error: error.message,
         });
     }

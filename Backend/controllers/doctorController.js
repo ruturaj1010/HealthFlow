@@ -28,8 +28,8 @@ const createDoctor = async (req, res) => {
         }
 
         const existingUser = await pool.query(
-            "SELECT id FROM users WHERE email = $1 LIMIT 1",
-            [email]
+            "SELECT id FROM users WHERE email = $1 AND tenant_id = $2 AND is_deleted = FALSE LIMIT 1",
+            [email, tenantId]
         );
         if (existingUser.rowCount > 0) {
             return res.status(409).json({
@@ -42,19 +42,19 @@ const createDoctor = async (req, res) => {
 
         const data = await withTransaction(async (client) => {
             const userInsert = await client.query(
-                `INSERT INTO users (name, email, password, role, tenant_id)
-                 VALUES ($1, $2, $3, $4, $5)
+                `INSERT INTO users (name, email, password, role, tenant_id, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  RETURNING id, name, email, phone, role, tenant_id, created_at`,
-                [name, email, passwordHash, "DOCTOR", tenantId]
+                [name, email, passwordHash, "DOCTOR", tenantId, req.user.userId]
             );
 
             const user = userInsert.rows[0];
 
             const doctorInsert = await client.query(
-                `INSERT INTO doctors (user_id, specialization, consultation_fee, tenant_id)
-                 VALUES ($1, $2, $3, $4)
+                `INSERT INTO doctors (user_id, specialization, consultation_fee, tenant_id, created_by)
+                 VALUES ($1, $2, $3, $4, $5)
                  RETURNING id, user_id, specialization, consultation_fee, tenant_id, created_at`,
-                [user.id, specialization, consultation_fee, tenantId]
+                [user.id, specialization, consultation_fee, tenantId, req.user.userId]
             );
 
             return {
@@ -108,7 +108,7 @@ const getDoctors = async (req, res) => {
                 d.created_at
              FROM doctors d
              JOIN users u ON u.id = d.user_id
-             WHERE d.tenant_id = $1
+             WHERE d.tenant_id = $1 AND d.is_deleted = FALSE AND u.is_deleted = FALSE
              ORDER BY d.created_at DESC`,
             [tenantId]
         );
@@ -152,7 +152,7 @@ const getDoctorById = async (req, res) => {
                 d.created_at
              FROM doctors d
              JOIN users u ON u.id = d.user_id
-             WHERE d.id = $1 AND d.tenant_id = $2`,
+             WHERE d.id = $1 AND d.tenant_id = $2 AND d.is_deleted = FALSE AND u.is_deleted = FALSE`,
             [id, tenantId]
         );
 
@@ -223,8 +223,9 @@ const updateDoctor = async (req, res) => {
 
         const result = await pool.query(
             `UPDATE doctors
-             SET ${updates.join(", ")}
+             SET ${updates.join(", ")}, updated_at = CURRENT_TIMESTAMP
              WHERE id = $${index++} AND tenant_id = $${index}
+               AND is_deleted = FALSE
              RETURNING id, user_id, specialization, consultation_fee, tenant_id, created_at`,
             values
         );

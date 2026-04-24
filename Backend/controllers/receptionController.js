@@ -37,7 +37,7 @@ const bookFromReception = async (req, res) => {
 
             if (resolvedPatientId) {
                 const patientCheck = await client.query(
-                    "SELECT id FROM patients WHERE id = $1 AND tenant_id = $2 LIMIT 1",
+                    "SELECT id FROM patients WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE LIMIT 1",
                     [resolvedPatientId, tenantId]
                 );
                 if (patientCheck.rowCount === 0) {
@@ -51,7 +51,7 @@ const bookFromReception = async (req, res) => {
                 const existingPatient = await client.query(
                     `SELECT id, user_id, name, phone, tenant_id, created_at
                      FROM patients
-                     WHERE phone = $1 AND tenant_id = $2
+                     WHERE phone = $1 AND tenant_id = $2 AND is_deleted = FALSE
                      LIMIT 1`,
                     [patient_phone, tenantId]
                 );
@@ -60,10 +60,10 @@ const bookFromReception = async (req, res) => {
                     resolvedPatientId = existingPatient.rows[0].id;
                 } else {
                     const patientInsert = await client.query(
-                        `INSERT INTO patients (name, phone, tenant_id)
-                         VALUES ($1, $2, $3)
+                        `INSERT INTO patients (name, phone, tenant_id, created_by)
+                         VALUES ($1, $2, $3, $4)
                          RETURNING id, user_id, name, phone, tenant_id, created_at`,
-                        [patient_name, patient_phone, tenantId]
+                        [patient_name, patient_phone, tenantId, req.user.userId]
                     );
                     createdPatient = patientInsert.rows[0];
                     resolvedPatientId = createdPatient.id;
@@ -73,7 +73,7 @@ const bookFromReception = async (req, res) => {
             const slotCheck = await client.query(
                 `SELECT id, slot_date, max_patients
                  FROM time_slots
-                 WHERE id = $1 AND doctor_id = $2 AND tenant_id = $3
+                 WHERE id = $1 AND doctor_id = $2 AND tenant_id = $3 AND is_deleted = FALSE
                  LIMIT 1`,
                 [slot_id, doctor_id, tenantId]
             );
@@ -83,7 +83,7 @@ const bookFromReception = async (req, res) => {
 
             const slot = slotCheck.rows[0];
             const capacityCheck = await client.query(
-                "SELECT COUNT(*)::int AS total FROM appointments WHERE slot_id = $1 AND tenant_id = $2",
+                "SELECT COUNT(*)::int AS total FROM appointments WHERE slot_id = $1 AND tenant_id = $2 AND is_deleted = FALSE",
                 [slot_id, tenantId]
             );
             const currentCount = capacityCheck.rows[0].total;
@@ -92,17 +92,17 @@ const bookFromReception = async (req, res) => {
             }
 
             const appointmentInsert = await client.query(
-                `INSERT INTO appointments (patient_id, doctor_id, slot_id, appointment_date, tenant_id)
-                 VALUES ($1, $2, $3, $4, $5)
+                `INSERT INTO appointments (patient_id, doctor_id, slot_id, appointment_date, tenant_id, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  RETURNING id, patient_id, doctor_id, slot_id, appointment_date, tenant_id, created_at`,
-                [resolvedPatientId, doctor_id, slot_id, slot.slot_date, tenantId]
+                [resolvedPatientId, doctor_id, slot_id, slot.slot_date, tenantId, req.user.userId]
             );
             const appointment = appointmentInsert.rows[0];
 
             const lockResult = await client.query(
                 `SELECT last_token
                  FROM doctor_daily_counter
-                 WHERE doctor_id = $1 AND date = CURRENT_DATE AND tenant_id = $2
+                 WHERE doctor_id = $1 AND date = CURRENT_DATE AND tenant_id = $2 AND is_deleted = FALSE
                  FOR UPDATE`,
                 [doctor_id, tenantId]
             );
@@ -111,10 +111,10 @@ const bookFromReception = async (req, res) => {
             if (lockResult.rowCount === 0) {
                 try {
                     const insertCounter = await client.query(
-                        `INSERT INTO doctor_daily_counter (doctor_id, date, last_token, tenant_id)
-                         VALUES ($1, CURRENT_DATE, 1, $2)
+                        `INSERT INTO doctor_daily_counter (doctor_id, date, last_token, tenant_id, created_by)
+                         VALUES ($1, CURRENT_DATE, 1, $2, $3)
                          RETURNING last_token`,
-                        [doctor_id, tenantId]
+                        [doctor_id, tenantId, req.user.userId]
                     );
                     tokenNumber = insertCounter.rows[0].last_token;
                 } catch (error) {
@@ -124,14 +124,14 @@ const bookFromReception = async (req, res) => {
                     const relock = await client.query(
                         `SELECT last_token
                          FROM doctor_daily_counter
-                         WHERE doctor_id = $1 AND date = CURRENT_DATE AND tenant_id = $2
+                         WHERE doctor_id = $1 AND date = CURRENT_DATE AND tenant_id = $2 AND is_deleted = FALSE
                          FOR UPDATE`,
                         [doctor_id, tenantId]
                     );
                     const updated = await client.query(
                         `UPDATE doctor_daily_counter
                          SET last_token = $1
-                         WHERE doctor_id = $2 AND date = CURRENT_DATE AND tenant_id = $3
+                         WHERE doctor_id = $2 AND date = CURRENT_DATE AND tenant_id = $3 AND is_deleted = FALSE
                          RETURNING last_token`,
                         [relock.rows[0].last_token + 1, doctor_id, tenantId]
                     );
@@ -141,7 +141,7 @@ const bookFromReception = async (req, res) => {
                 const updated = await client.query(
                     `UPDATE doctor_daily_counter
                      SET last_token = $1
-                     WHERE doctor_id = $2 AND date = CURRENT_DATE AND tenant_id = $3
+                     WHERE doctor_id = $2 AND date = CURRENT_DATE AND tenant_id = $3 AND is_deleted = FALSE
                      RETURNING last_token`,
                     [lockResult.rows[0].last_token + 1, doctor_id, tenantId]
                 );
@@ -150,10 +150,10 @@ const bookFromReception = async (req, res) => {
 
             const tokenCode = buildTokenCode(doctor_id, tokenNumber);
             const tokenInsert = await client.query(
-                `INSERT INTO queue_tokens (appointment_id, doctor_id, token_number, token_code, queue_date, tenant_id)
-                 VALUES ($1, $2, $3, $4, CURRENT_DATE, $5)
+                `INSERT INTO queue_tokens (appointment_id, doctor_id, token_number, token_code, queue_date, tenant_id, created_by)
+                 VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6)
                  RETURNING id, appointment_id, doctor_id, token_number, token_code, queue_date, tenant_id, created_at`,
-                [appointment.id, doctor_id, tokenNumber, tokenCode, tenantId]
+                [appointment.id, doctor_id, tokenNumber, tokenCode, tenantId, req.user.userId]
             );
 
             return {

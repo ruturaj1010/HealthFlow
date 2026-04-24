@@ -8,7 +8,7 @@ const createHospital = async (req, res) => {
         const duplicateCheck = await pool.query(
             `SELECT id
              FROM hospitals
-             WHERE email = $1 OR LOWER(subdomain) = $2
+             WHERE (email = $1 OR LOWER(subdomain) = $2) AND is_deleted = FALSE
              LIMIT 1`,
             [email, subdomain]
         );
@@ -21,7 +21,7 @@ const createHospital = async (req, res) => {
         }
 
         const userExists = await pool.query(
-            "SELECT id FROM users WHERE email = $1 LIMIT 1",
+            "SELECT id FROM users WHERE email = $1 AND is_deleted = FALSE LIMIT 1",
             [adminEmail]
         );
         if (userExists.rowCount > 0) {
@@ -35,19 +35,19 @@ const createHospital = async (req, res) => {
 
         const data = await withTransaction(async (client) => {
             const hospitalInsert = await client.query(
-                `INSERT INTO hospitals (name, email, subdomain)
-                 VALUES ($1, $2, $3)
+                `INSERT INTO hospitals (name, email, subdomain, created_by)
+                 VALUES ($1, $2, $3, $4)
                  RETURNING id, name, email, subdomain, opening_time, closing_time`,
-                [name, email, subdomain]
+                [name, email, subdomain, req.user.userId]
             );
 
             const hospital = hospitalInsert.rows[0];
 
             const adminInsert = await client.query(
-                `INSERT INTO users (name, email, password, role, tenant_id)
-                 VALUES ($1, $2, $3, $4, $5)
+                `INSERT INTO users (name, email, password, role, tenant_id, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  RETURNING id, name, email, phone, role, tenant_id, created_at`,
-                [adminName, adminEmail, passwordHash, "HOSPITAL_ADMIN", hospital.id]
+                [adminName, adminEmail, passwordHash, "HOSPITAL_ADMIN", hospital.id, req.user.userId]
             );
 
             return {
@@ -75,6 +75,7 @@ const getHospitals = async (req, res) => {
         const result = await pool.query(
             `SELECT id, name, email, subdomain, opening_time, closing_time, status, created_at
              FROM hospitals
+             WHERE is_deleted = FALSE
              ORDER BY created_at DESC`
         );
 
@@ -98,7 +99,7 @@ const getHospitalById = async (req, res) => {
         const result = await pool.query(
             `SELECT id, name, email, subdomain, opening_time, closing_time, status, created_at
              FROM hospitals
-             WHERE id = $1`,
+             WHERE id = $1 AND is_deleted = FALSE`,
             [id]
         );
 
@@ -130,8 +131,9 @@ const updateHospitalStatus = async (req, res) => {
 
         const result = await pool.query(
             `UPDATE hospitals
-             SET status = $1
+             SET status = $1, updated_at = CURRENT_TIMESTAMP
              WHERE id = $2
+               AND is_deleted = FALSE
              RETURNING id, name, email, subdomain, opening_time, closing_time, status, created_at`,
             [status, id]
         );

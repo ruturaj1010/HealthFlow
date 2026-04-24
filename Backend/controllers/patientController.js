@@ -25,7 +25,7 @@ const createPatient = async (req, res) => {
 
         if (user_id) {
             const userCheck = await pool.query(
-                "SELECT id FROM users WHERE id = $1 AND tenant_id = $2 LIMIT 1",
+                "SELECT id FROM users WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE LIMIT 1",
                 [user_id, tenantId]
             );
             if (userCheck.rowCount === 0) {
@@ -37,10 +37,10 @@ const createPatient = async (req, res) => {
         }
 
         const result = await pool.query(
-            `INSERT INTO patients (user_id, name, phone, tenant_id)
-             VALUES ($1, $2, $3, $4)
+            `INSERT INTO patients (user_id, name, phone, tenant_id, created_by)
+             VALUES ($1, $2, $3, $4, $5)
              RETURNING id, user_id, name, phone, tenant_id, created_at`,
-            [user_id || null, name, phone, tenantId]
+            [user_id || null, name, phone, tenantId, req.user.userId]
         );
 
         return res.status(201).json({
@@ -67,7 +67,7 @@ const getPatients = async (req, res) => {
         const result = await pool.query(
             `SELECT id, user_id, name, phone, tenant_id, created_at
              FROM patients
-             WHERE tenant_id = $1
+             WHERE tenant_id = $1 AND is_deleted = FALSE
              ORDER BY created_at DESC`,
             [tenantId]
         );
@@ -98,7 +98,7 @@ const getPatientById = async (req, res) => {
         const result = await pool.query(
             `SELECT id, user_id, name, phone, tenant_id, created_at
              FROM patients
-             WHERE id = $1 AND tenant_id = $2`,
+             WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
             [id, tenantId]
         );
 
@@ -162,8 +162,9 @@ const updatePatient = async (req, res) => {
 
         const result = await pool.query(
             `UPDATE patients
-             SET ${updates.join(", ")}
+             SET ${updates.join(", ")}, updated_at = CURRENT_TIMESTAMP
              WHERE id = $${index++} AND tenant_id = $${index}
+               AND is_deleted = FALSE
              RETURNING id, user_id, name, phone, tenant_id, created_at`,
             values
         );
